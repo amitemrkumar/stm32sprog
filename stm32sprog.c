@@ -37,9 +37,12 @@ enum {
     ID_LOW_DENSITY = 0x0412,
     ID_MED_DENSITY = 0x0410,
     ID_HI_DENSITY = 0x0414,
-    ID_ULTRA_LOW_POWER = 0x0416,
     ID_CONNECTIVITY = 0x0418,
-    ID_VALUE = 0x0420
+    ID_MED_DENSITY_VALUE = 0x0420,
+    ID_HI_DENSITY_VALUE = 0x0428,
+    ID_XL_DENSITY = 0x0430,
+    ID_MED_DENSITY_ULTRA_LOW_POWER = 0x0436,
+    ID_HI_DENSITY_ULTRA_LOW_POWER = 0x0416
 };
 
 typedef struct {
@@ -349,11 +352,6 @@ static bool stmGetDevParams(void) {
     case ID_MED_DENSITY:
         devParams.flashEndAddr = 0x08020000;
         break;
-    case ID_ULTRA_LOW_POWER:
-        devParams.flashEndAddr = 0x08020000;
-        devParams.flashPagesPerSector = 16;
-        devParams.flashPageSize = 256;
-        break;
     case ID_HI_DENSITY:
         devParams.flashEndAddr = 0x08080000;
         devParams.flashPagesPerSector = 2;
@@ -364,8 +362,28 @@ static bool stmGetDevParams(void) {
         devParams.flashPagesPerSector = 2;
         devParams.flashPageSize = 2048;
         break;
-    case ID_VALUE:
+    case ID_MED_DENSITY_VALUE:
         devParams.flashEndAddr = 0x08020000;
+        break;
+    case ID_HI_DENSITY_VALUE:
+        devParams.flashEndAddr = 0x08080000;
+        devParams.flashPagesPerSector = 2;
+        devParams.flashPageSize = 2048;
+        break;
+    case ID_XL_DENSITY:
+        devParams.flashEndAddr = 0x08100000;
+        devParams.flashPagesPerSector = 2;
+        devParams.flashPageSize = 2048;
+        break;
+    case ID_MED_DENSITY_ULTRA_LOW_POWER:
+        devParams.flashEndAddr = 0x08060000;
+        devParams.flashPagesPerSector = 16;
+        devParams.flashPageSize = 256;
+        break;
+    case ID_HI_DENSITY_ULTRA_LOW_POWER:
+        devParams.flashEndAddr = 0x08020000;
+        devParams.flashPagesPerSector = 16;
+        devParams.flashPageSize = 256;
         break;
     default:
         return false;
