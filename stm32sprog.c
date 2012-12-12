@@ -63,19 +63,21 @@ static bool stmConnect(void);
 static int cmdIndex(uint8_t cmd);
 static bool cmdSupported(Command cmd);
 
+static bool serialWrite16(const uint16_t data, uint8_t *checksum);
+
 static bool stmRecvAck(void);
 static bool stmSendByte(uint8_t byte);
 static bool stmSendAddr(uint32_t addr);
 static bool stmSendBlock(const uint8_t *buffer, size_t size);
 
 static bool stmGetDevParams(void);
-static bool stmEraseFlashPages(uint16_t firstPage, uint16_t pages);
-static bool stmEraseFlash(uint32_t fileSize);
+static bool stmEraseFlashPages(uint16_t first, uint16_t count);
+static bool stmEraseFlash(void);
 static bool stmWriteBlock(uint32_t addr, const uint8_t *buff, size_t size);
 static bool stmWriteFromFile(const char *fileName);
 static bool stmReadBlock(uint32_t addr, uint8_t *buff, size_t size);
 static bool stmCompareToFile(const char *fileName);
-static bool stmRun();
+static bool stmRun(void);
 static void printProgressBar(int percent);
 
 static SerialDev *dev = NULL;
@@ -159,21 +161,8 @@ int main(int argc, char **argv) {
     int minor = devParams.bootloaderVer & 0x0F;
     printf("Bootloader version %d.%d detected.\n", major, minor);
 
-    uint32_t fileSize = 0;
-    if (fileName != NULL) {
-        FILE *firmware = fopen(fileName, "rb");
-        if(firmware == NULL) {
-            fprintf(stderr, "Error opening file \"%s\"\n", fileName);
-            return false;
-        }
-        (void)fseek(firmware, 0L, SEEK_END);
-        fileSize = ftell(firmware);
-        fclose(firmware);
-
-    }
-
     if(erase) {
-        success = stmEraseFlash(fileSize);
+        success = stmEraseFlash();
         if(!success) {
             fprintf(stderr, "Unable to erase flash.\n");
             goto ExitApp;
@@ -267,6 +256,13 @@ static bool cmdSupported(Command cmd) {
     int idx = cmdIndex(cmd);
     assert(idx >= 0);
     return devParams.commands[idx];
+}
+
+static bool serialWrite16(const uint16_t data, uint8_t *checksum) {
+    uint8_t buffer[] = { ((data >> 8) & 0xFF), (data & 0xFF) };
+    *checksum ^= buffer[1];
+    *checksum ^= buffer[0];
+    return serialWrite(dev, buffer, sizeof(buffer));
 }
 
 static bool stmRecvAck(void) {
@@ -392,92 +388,73 @@ static bool stmGetDevParams(void) {
     return true;
 }
 
-static bool stmEraseFlashPages(uint16_t firstPage, uint16_t pages) {
-    bool extendedErase;
-    if(cmdSupported(CMD_ERASE)) {
-        if(!stmSendByte(CMD_ERASE)) return false;
-        extendedErase = false;
-    }
-    else if(cmdSupported(CMD_EXTENDED_ERASE)) {
-        if(!stmSendByte(CMD_EXTENDED_ERASE)) return false;
-        extendedErase = true;
-    }
-    else {
-        fprintf(stderr,
-                "Target device does not support known erase commands.\n");
-        return false;
-    }
-    printf("Erasing:\n");
-    uint8_t b = 0;
-    uint8_t checksum;
-    if (extendedErase) {
-        b = (pages - 1) >> 8;
-        checksum = b;
-        if(!serialWrite(dev, &b, 1)) return false;
-    }
-    b = (pages - 1);
-    checksum ^= b;
-    if(!serialWrite(dev, &b, 1)) return false;
-    for (uint16_t i = firstPage ; i < (firstPage + pages) ; i++) {
-        if (extendedErase) {
-            uint8_t b = i >> 8;
-            checksum ^= b;
-            if(!serialWrite(dev, &b, 1)) return false;
-        }
-        b = i;
-        checksum ^= b;
-        if(!serialWrite(dev, &b, 1)) return false;
-        printProgressBar((i+1) * 100 / pages);
-    }
-    if(!serialWrite(dev, &checksum, 1)) return false;
-    printf("\n");
-    return stmRecvAck();
-}
+static bool stmEraseFlashPages(uint16_t first, uint16_t count) {
+    if(count == 0) return true;
 
-static bool stmEraseFlash(uint32_t fileSize) {
-    uint16_t pages;
-    if (fileSize != 0) {
-        pages = fileSize / devParams.flashPageSize;
-        if (pages * devParams.flashPageSize != fileSize) {
-            pages++;
-        }
-    }
-    else {
-        pages = (devParams.flashEndAddr - devParams.flashBeginAddr)/devParams.flashPageSize;
-    }
+    printf("Erasing...\n");
+
     if(cmdSupported(CMD_ERASE)) {
-        if (fileSize == 0) {
-            if(!stmSendByte(CMD_ERASE)) return false;
-            if(!stmSendByte(0xFF)) return false;
+        if(first > 255 || first + count - 1 > 255) return false;
+
+        if(!stmSendByte(CMD_ERASE)) return false;
+        uint8_t data = count - 1;
+        uint8_t checksum = data;
+        if(!serialWrite(dev, &data, 1)) return false;
+        for(data = first; data < first + count; ++data) {
+            checksum ^= data;
+            if(!serialWrite(dev, &data, 1)) return false;
         }
-        else {
-            return stmEraseFlashPages(0, pages);
-        }
+        if(!serialWrite(dev, &checksum, 1)) return false;
     } else if(cmdSupported(CMD_EXTENDED_ERASE)) {
-        bool erased = false;
-        if (fileSize == 0) {
-            // First try full erase
-            if(!stmSendByte(CMD_EXTENDED_ERASE)) return false;
-            uint8_t data[] = { 0xFF, 0xFF, 0x00 };
-            if(!serialWrite(dev, data, sizeof(data))) return false;
-            erased = stmRecvAck();
+        if(count > 0xFFF0) return false;
+
+        if(!stmSendByte(CMD_EXTENDED_ERASE)) return false;
+        uint8_t checksum = 0;
+        if(!serialWrite16(count - 1, &checksum)) return false;
+        for(uint16_t i = first; i < first + count; ++i) {
+            if(!serialWrite16(i, &checksum)) return false;
         }
-        if (!erased) {
-            return stmEraseFlashPages(0, pages);
-        }
+        if(!serialWrite(dev, &checksum, 1)) return false;
     } else {
         fprintf(stderr,
                 "Target device does not support known erase commands.\n");
         return false;
     }
 
-    useconds_t delay = (devParams.eraseDelay / 100) + 1;
-    printf("Erasing:\n");
-    for(int i = 1; i <= 100; ++i) {
-        usleep(delay);
-        printProgressBar(i);
+    return stmRecvAck();
+}
+
+static bool stmEraseFlash(void) {
+    if(cmdSupported(CMD_ERASE)) {
+        if(!stmSendByte(CMD_ERASE)) return false;
+        uint8_t data[] = { 0xFF, 0x00 };
+        if(!serialWrite(dev, data, sizeof(data))) return false;
+    } else if(cmdSupported(CMD_EXTENDED_ERASE)) {
+        if(!stmSendByte(CMD_EXTENDED_ERASE)) return false;
+        uint8_t data[] = { 0xFF, 0xFF, 0x00 };
+        if(!serialWrite(dev, data, sizeof(data))) return false;
+    } else {
+        fprintf(stderr,
+                "Target device does not support known erase commands.\n");
+        return false;
     }
-    printf("\n");
+
+    if(stmRecvAck()) {
+        useconds_t delay = (devParams.eraseDelay / 100) + 1;
+        printf("Erasing:\n");
+        for(int i = 1; i <= 100; ++i) {
+            usleep(delay);
+            printProgressBar(i);
+        }
+        printf("\n");
+    } else {
+        // Global erase failed, try page-by-page erase.
+        uint16_t numPages =
+                (devParams.flashEndAddr - devParams.flashBeginAddr) /
+                devParams.flashPageSize;
+        return stmEraseFlashPages(0, numPages);
+    }
+
     return true;
 }
 
@@ -593,7 +570,7 @@ static bool stmCompareToFile(const char *fileName) {
     return ok;
 }
 
-static bool stmRun() {
+static bool stmRun(void) {
     if(!stmSendByte(CMD_GO)) return false;
     return stmSendAddr(devParams.flashBeginAddr);
 }
