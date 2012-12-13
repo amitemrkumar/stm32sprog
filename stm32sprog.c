@@ -77,7 +77,7 @@ static bool stmWriteBlock(uint32_t addr, const uint8_t *buff, size_t size);
 static bool stmWriteFromFile(const char *fileName);
 static bool stmReadBlock(uint32_t addr, uint8_t *buff, size_t size);
 static bool stmCompareToFile(const char *fileName);
-static bool stmRun(void);
+static bool stmRun(uint32_t addr);
 static void printProgressBar(int percent);
 
 static SerialDev *dev = NULL;
@@ -185,7 +185,7 @@ int main(int argc, char **argv) {
     }
 
     if(run) {
-        success = stmRun();
+        success = stmRun(devParams.flashBeginAddr);
         if(!success) {
             fprintf(stderr, "Unable to start firmware.\n");
             goto ExitApp;
@@ -570,9 +570,9 @@ static bool stmCompareToFile(const char *fileName) {
     return ok;
 }
 
-static bool stmRun(void) {
+static bool stmRun(uint32_t addr) {
     if(!stmSendByte(CMD_GO)) return false;
-    return stmSendAddr(devParams.flashBeginAddr);
+    return stmSendAddr(addr);
 }
 
 static void printProgressBar(int percent) {
