@@ -167,9 +167,26 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Unable to erase flash.\n");
             goto ExitApp;
         }
+    } else if(fileName) {
+        FILE *firmware = fopen(fileName, "rb");
+        if(firmware == NULL) {
+            fprintf(stderr, "Error opening file \"%s\"\n", fileName);
+            goto ExitApp;
+        }
+        (void)fseek(firmware, 0L, SEEK_END);
+        long fileSize = ftell(firmware);
+        fclose(firmware);
+
+        uint16_t numPages = (fileSize + devParams.flashPageSize) /
+                devParams.flashPageSize;
+        success = stmEraseFlashPages(0, numPages);
+        if(!success) {
+            fprintf(stderr, "Unable to erase flash.\n");
+            goto ExitApp;
+        }
     }
 
-    if(fileName != NULL) {
+    if(fileName) {
         success = stmWriteFromFile(fileName);
         if(!success) {
             fprintf(stderr, "Unable to write flash.\n");
