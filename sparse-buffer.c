@@ -136,6 +136,16 @@ MemBlock SparseBuffer_read(SparseBuffer *self, size_t length) {
     return result;
 }
 
+size_t SparseBuffer_size(SparseBuffer *self) {
+    size_t size = 0;
+    Node *node = self->begin;
+    while(node) {
+        size += node->block.length;
+        node = node->next[0];
+    }
+    return size;
+}
+
 void SparseBuffer_rewind(SparseBuffer *self) {
     self->curr = self->begin;
     self->offset = 0;

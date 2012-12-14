@@ -42,7 +42,8 @@ void SparseBuffer_destroy(SparseBuffer *self);
 /** \brief Sets data in a sparse buffer.
  *
  * \param self The sparse buffer.
- * \param block The block to store in the buffer.
+ * \param block The block to store in the buffer.  The buffer makes a copy of
+ *              the block's data.
  */
 void SparseBuffer_set(SparseBuffer *self, MemBlock block);
 
@@ -54,6 +55,14 @@ void SparseBuffer_set(SparseBuffer *self, MemBlock block);
  * \return The data.
  */
 MemBlock SparseBuffer_read(SparseBuffer *self, size_t length);
+
+/** \brief Get the number of bytes stored in the buffer.
+ *
+ * \param self The sparse buffer.
+ *
+ * \return The number of bytes in the buffer, excluding unset gaps.
+ */
+size_t SparseBuffer_size(SparseBuffer *self);
 
 /** \brief Reset the read position to the beginning of the buffer.
  *
