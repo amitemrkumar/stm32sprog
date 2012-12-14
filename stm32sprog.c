@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "serial.h"
+#include "sparse-buffer.h"
 
 static const char *DEFAULT_DEV_NAME = "/dev/ttyUSB0";
 static const int DEFAULT_BAUD = 115200;
@@ -58,6 +59,8 @@ typedef struct {
 
 static void printUsage(void);
 
+static SparseBuffer *readFile(const char *fileName);
+
 static bool stmConnect(void);
 
 static int cmdIndex(uint8_t cmd);
@@ -72,11 +75,11 @@ static bool stmSendBlock(const uint8_t *buffer, size_t size);
 
 static bool stmGetDevParams(void);
 static bool stmEraseFlashPages(uint16_t first, uint16_t count);
-static bool stmEraseFlash(void);
+static bool stmErase(void);
 static bool stmWriteBlock(uint32_t addr, const uint8_t *buff, size_t size);
-static bool stmWriteFromFile(const char *fileName);
 static bool stmReadBlock(uint32_t addr, uint8_t *buff, size_t size);
-static bool stmCompareToFile(const char *fileName);
+static bool stmWrite(SparseBuffer *buffer);
+static bool stmVerify(SparseBuffer *buffer);
 static bool stmRun(uint32_t addr);
 static void printProgressBar(int percent);
 
@@ -89,6 +92,7 @@ int main(int argc, char **argv) {
     int baud = DEFAULT_BAUD;
     char *devName = NULL;
     char *fileName = NULL;
+    SparseBuffer *buffer = NULL;
     bool erase = false;
     bool verify = false;
     bool run = false;
@@ -162,7 +166,7 @@ int main(int argc, char **argv) {
     printf("Bootloader version %d.%d detected.\n", major, minor);
 
     if(erase) {
-        success = stmEraseFlash();
+        success = stmErase();
         if(!success) {
             fprintf(stderr, "Unable to erase flash.\n");
             goto ExitApp;
@@ -170,13 +174,19 @@ int main(int argc, char **argv) {
     }
 
     if(fileName != NULL) {
-        success = stmWriteFromFile(fileName);
+        buffer = readFile(fileName);
+        if(!buffer) {
+            fprintf(stderr, "Error reading file \"%s\"\n", fileName);
+            goto ExitApp;
+        }
+
+        success = stmWrite(buffer);
         if(!success) {
             fprintf(stderr, "Unable to write flash.\n");
             goto ExitApp;
         }
         if(verify) {
-            success = stmCompareToFile(fileName);
+            success = stmVerify(buffer);
             if(!success) {
                 fprintf(stderr, "Flash verification failed.\n");
                 goto ExitApp;
@@ -196,6 +206,7 @@ ExitApp:
     if(dev) serialClose(dev);
     free(devName);
     free(fileName);
+    if(buffer) SparseBuffer_destroy(buffer);
     return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
@@ -214,6 +225,43 @@ static void printUsage(void) {
             "\n",
             DEFAULT_BAUD,
             DEFAULT_DEV_NAME);
+}
+
+static SparseBuffer *readFile(const char *fileName) {
+    SparseBuffer *buffer = SparseBuffer_create();
+    if(!buffer) goto BufferError;
+
+    FILE *firmware = fopen(fileName, "rb");
+    if(!firmware) goto OpenError;
+
+    (void)fseek(firmware, 0L, SEEK_END);
+    size_t length = ftell(firmware);
+    uint8_t *mem = malloc(length);
+    if(!mem) goto AllocError;
+
+    rewind(firmware);
+    if(fread(mem, 1, length, firmware) < length) {
+        goto ReadError;
+    }
+
+    MemBlock block;
+    block.offset = devParams.flashBeginAddr;
+    block.length = length;
+    block.data = mem;
+    SparseBuffer_set(buffer, block);
+
+    free(mem);
+    fclose(firmware);
+    return buffer;
+
+ReadError:
+    free(mem);
+AllocError:
+    fclose(firmware);
+OpenError:
+    SparseBuffer_destroy(buffer);
+BufferError:
+    return NULL;
 }
 
 static bool stmConnect(void) {
@@ -424,7 +472,7 @@ static bool stmEraseFlashPages(uint16_t first, uint16_t count) {
     return stmRecvAck();
 }
 
-static bool stmEraseFlash(void) {
+static bool stmErase(void) {
     if(cmdSupported(CMD_ERASE)) {
         if(!stmSendByte(CMD_ERASE)) return false;
         uint8_t data[] = { 0xFF, 0x00 };
@@ -465,54 +513,6 @@ static bool stmWriteBlock(uint32_t addr, const uint8_t *buff, size_t size) {
     return true;
 }
 
-static bool stmWriteFromFile(const char *fileName) {
-    if(!cmdSupported(CMD_WRITE_MEM)) {
-        fprintf(stderr,
-                "Target device does not support known write commands.\n");
-        return false;
-    }
-
-    FILE *firmware = fopen(fileName, "rb");
-    if(firmware == NULL) {
-        fprintf(stderr, "Error opening file \"%s\"\n", fileName);
-        return false;
-    }
-    (void)fseek(firmware, 0L, SEEK_END);
-    long fileEnd = ftell(firmware);
-    rewind(firmware);
-
-    printf("Writing:\n");
-
-    uint8_t buff[MAX_BLOCK_SIZE];
-    uint32_t addr = devParams.flashBeginAddr;
-    size_t i = 0;
-    int c;
-    bool ok = true;
-    long bytesWritten = 0;
-    while(ok && (c = fgetc(firmware)) != EOF) {
-        buff[i] = (uint8_t)c;
-        ++i;
-        if(i == MAX_BLOCK_SIZE) {
-            ok = stmWriteBlock(addr, buff, i);
-            usleep(devParams.writeDelay);
-            addr += i;
-            bytesWritten += i;
-            printProgressBar(bytesWritten * 100 / fileEnd);
-            i = 0;
-        }
-    }
-    if(ok && i > 0) {
-        ok = stmWriteBlock(addr, buff, i);
-        usleep(devParams.writeDelay);
-        bytesWritten += i;
-        printProgressBar(bytesWritten * 100 / fileEnd);
-    }
-    printf("\n");
-
-    fclose(firmware);
-    return ok;
-}
-
 static bool stmReadBlock(uint32_t addr, uint8_t *buff, size_t size) {
     if(!stmSendByte(CMD_READ_MEM)) return false;
     if(!stmSendAddr(addr)) return false;
@@ -520,53 +520,56 @@ static bool stmReadBlock(uint32_t addr, uint8_t *buff, size_t size) {
     return serialRead(dev, buff, size);
 }
 
-static bool stmCompareToFile(const char *fileName) {
+static bool stmWrite(SparseBuffer *buffer) {
+    if(!cmdSupported(CMD_WRITE_MEM)) {
+        fprintf(stderr,
+                "Target device does not support known write commands.\n");
+        return false;
+    }
+
+    printf("Writing:\n");
+
+    size_t bufferSize = SparseBuffer_size(buffer);
+    MemBlock block;
+    long bytesWritten = 0;
+    bool ok = true;
+
+    SparseBuffer_rewind(buffer);
+    while(ok && (block = SparseBuffer_read(buffer, MAX_BLOCK_SIZE)).data) {
+        ok = stmWriteBlock(block.offset, block.data, block.length);
+        usleep(devParams.writeDelay);
+        bytesWritten += block.length;
+        printProgressBar(bytesWritten * 100 / bufferSize);
+    }
+
+    printf("\n");
+    return ok;
+}
+
+static bool stmVerify(SparseBuffer *buffer) {
     if(!cmdSupported(CMD_READ_MEM)) {
         fprintf(stderr,
                 "Target device does not support known read commands.\n");
         return false;
     }
 
-    FILE *firmware = fopen(fileName, "rb");
-    if(firmware == NULL) {
-        fprintf(stderr, "Error opening file \"%s\"\n", fileName);
-        return false;
-    }
-    (void)fseek(firmware, 0L, SEEK_END);
-    long fileEnd = ftell(firmware);
-    rewind(firmware);
-
     printf("Verifying:\n");
 
-    uint8_t fileBuff[MAX_BLOCK_SIZE];
+    size_t bufferSize = SparseBuffer_size(buffer);
+    MemBlock block;
     uint8_t firmwareBuff[MAX_BLOCK_SIZE];
-    uint32_t addr = devParams.flashBeginAddr;
-    size_t i = 0;
-    int c;
-    bool ok = true;
     long bytesRead = 0;
+    bool ok = true;
 
-    while(ok && (c = fgetc(firmware)) != EOF) {
-        fileBuff[i] = (uint8_t)c;
-        ++i;
-        if(i == MAX_BLOCK_SIZE) {
-            ok = stmReadBlock(addr, firmwareBuff, i);
-            if(ok) ok = (memcmp(fileBuff, firmwareBuff, i) == 0);
-            addr += i;
-            bytesRead += i;
-            printProgressBar(bytesRead * 100 / fileEnd);
-            i = 0;
-        }
+    SparseBuffer_rewind(buffer);
+    while(ok && (block = SparseBuffer_read(buffer, MAX_BLOCK_SIZE)).data) {
+        ok = stmReadBlock(block.offset, firmwareBuff, block.length);
+        if(ok) ok = (memcmp(block.data, firmwareBuff, block.length) == 0);
+        bytesRead += block.length;
+        printProgressBar(bytesRead * 100 / bufferSize);
     }
-    if(ok && i > 0) {
-        ok = stmReadBlock(addr, firmwareBuff, i);
-        if(ok) ok = (memcmp(fileBuff, firmwareBuff, i) == 0);
-        bytesRead += i;
-        printProgressBar(bytesRead * 100 / fileEnd);
-    }
+
     printf("\n");
-
-    fclose(firmware);
     return ok;
 }
 
