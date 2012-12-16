@@ -4,7 +4,7 @@ RM := rm -f
 CFLAGS := -std=gnu99 -g -Wall -Wextra -pedantic -Werror
 
 PRJ := stm32sprog
-SRCS := stm32sprog.c serial.c sparse-buffer.c
+SRCS := stm32sprog.c firmware.c serial.c sparse-buffer.c
 
 all: $(PRJ)
 

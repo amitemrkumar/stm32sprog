@@ -8,8 +8,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "firmware.h"
 #include "serial.h"
-#include "sparse-buffer.h"
 
 static const char *DEFAULT_DEV_NAME = "/dev/ttyUSB0";
 static const int DEFAULT_BAUD = 115200;
@@ -58,8 +58,6 @@ typedef struct {
 } DeviceParameters;
 
 static void printUsage(void);
-
-static SparseBuffer *readFile(const char *fileName);
 
 static bool stmConnect(void);
 
@@ -165,22 +163,26 @@ int main(int argc, char **argv) {
     int minor = devParams.bootloaderVer & 0x0F;
     printf("Bootloader version %d.%d detected.\n", major, minor);
 
+    if(fileName) {
+        FirmwareFormat format = RAW;
+        buffer = readFirmware(fileName, &format);
+        if(!buffer) {
+            fprintf(stderr, "Error reading file \"%s\"\n", fileName);
+            goto ExitApp;
+        }
+        if(format == RAW) {
+            SparseBuffer_offset(buffer, devParams.flashBeginAddr);
+        }
+    }
+
     if(erase) {
         success = stmErase();
         if(!success) {
             fprintf(stderr, "Unable to erase flash.\n");
             goto ExitApp;
         }
-    } else if(fileName) {
-        FILE *firmware = fopen(fileName, "rb");
-        if(firmware == NULL) {
-            fprintf(stderr, "Error opening file \"%s\"\n", fileName);
-            goto ExitApp;
-        }
-        (void)fseek(firmware, 0L, SEEK_END);
-        long fileSize = ftell(firmware);
-        fclose(firmware);
-
+    } else if(buffer) {
+        size_t fileSize = SparseBuffer_size(buffer);
         uint16_t numPages = (fileSize + devParams.flashPageSize) /
                 devParams.flashPageSize;
         success = stmEraseFlashPages(0, numPages);
@@ -190,13 +192,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    if(fileName != NULL) {
-        buffer = readFile(fileName);
-        if(!buffer) {
-            fprintf(stderr, "Error reading file \"%s\"\n", fileName);
-            goto ExitApp;
-        }
-
+    if(buffer) {
         success = stmWrite(buffer);
         if(!success) {
             fprintf(stderr, "Unable to write flash.\n");
@@ -242,43 +238,6 @@ static void printUsage(void) {
             "\n",
             DEFAULT_BAUD,
             DEFAULT_DEV_NAME);
-}
-
-static SparseBuffer *readFile(const char *fileName) {
-    SparseBuffer *buffer = SparseBuffer_create();
-    if(!buffer) goto BufferError;
-
-    FILE *firmware = fopen(fileName, "rb");
-    if(!firmware) goto OpenError;
-
-    (void)fseek(firmware, 0L, SEEK_END);
-    size_t length = ftell(firmware);
-    uint8_t *mem = malloc(length);
-    if(!mem) goto AllocError;
-
-    rewind(firmware);
-    if(fread(mem, 1, length, firmware) < length) {
-        goto ReadError;
-    }
-
-    MemBlock block;
-    block.offset = devParams.flashBeginAddr;
-    block.length = length;
-    block.data = mem;
-    SparseBuffer_set(buffer, block);
-
-    free(mem);
-    fclose(firmware);
-    return buffer;
-
-ReadError:
-    free(mem);
-AllocError:
-    fclose(firmware);
-OpenError:
-    SparseBuffer_destroy(buffer);
-BufferError:
-    return NULL;
 }
 
 static bool stmConnect(void) {
