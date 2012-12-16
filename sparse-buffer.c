@@ -103,6 +103,15 @@ void SparseBuffer_set(SparseBuffer *self, MemBlock block) {
     insertNode(node, prev);
 }
 
+void SparseBuffer_offset(SparseBuffer *self, ptrdiff_t offset) {
+    Node *node = self->begin;
+    while(node) {
+        node->block.offset += offset;
+        node = node->next[0];
+    }
+    self->offset += offset;
+}
+
 MemBlock SparseBuffer_read(SparseBuffer *self, size_t length) {
     MemBlock result;
 
@@ -148,7 +157,7 @@ size_t SparseBuffer_size(SparseBuffer *self) {
 
 void SparseBuffer_rewind(SparseBuffer *self) {
     self->curr = self->begin;
-    self->offset = 0;
+    self->offset = self->curr ? self->curr->block.offset : 0;
 }
 
 static void *memdup(const void *data, size_t length) {
