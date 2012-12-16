@@ -73,7 +73,7 @@ static bool stmSendBlock(const uint8_t *buffer, size_t size);
 
 static bool stmGetDevParams(void);
 static bool stmEraseFlashPages(uint16_t first, uint16_t count);
-static bool stmErase(void);
+static bool stmEraseAll(void);
 static bool stmWriteBlock(uint32_t addr, const uint8_t *buff, size_t size);
 static bool stmReadBlock(uint32_t addr, uint8_t *buff, size_t size);
 static bool stmWrite(SparseBuffer *buffer);
@@ -176,7 +176,7 @@ int main(int argc, char **argv) {
     }
 
     if(erase) {
-        success = stmErase();
+        success = stmEraseAll();
         if(!success) {
             fprintf(stderr, "Unable to erase flash.\n");
             goto ExitApp;
@@ -448,7 +448,7 @@ static bool stmEraseFlashPages(uint16_t first, uint16_t count) {
     return stmRecvAck();
 }
 
-static bool stmErase(void) {
+static bool stmEraseAll(void) {
     if(cmdSupported(CMD_ERASE)) {
         if(!stmSendByte(CMD_ERASE)) return false;
         uint8_t data[] = { 0xFF, 0x00 };
