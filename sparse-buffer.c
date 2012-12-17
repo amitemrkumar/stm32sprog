@@ -130,7 +130,7 @@ MemBlock SparseBuffer_read(SparseBuffer *self, size_t length) {
         end = offset + node->block.length;
     }
 
-    if(offset + length > end) {
+    if(!length || offset + length > end) {
         length = end - offset;
     }
 

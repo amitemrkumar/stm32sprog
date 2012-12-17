@@ -72,10 +72,11 @@ static bool stmSendAddr(uint32_t addr);
 static bool stmSendBlock(const uint8_t *buffer, size_t size);
 
 static bool stmGetDevParams(void);
-static bool stmEraseFlashPages(uint16_t first, uint16_t count);
+static bool stmErasePages(uint16_t first, uint16_t count);
 static bool stmEraseAll(void);
 static bool stmWriteBlock(uint32_t addr, const uint8_t *buff, size_t size);
 static bool stmReadBlock(uint32_t addr, uint8_t *buff, size_t size);
+static bool stmErase(SparseBuffer *buffer);
 static bool stmWrite(SparseBuffer *buffer);
 static bool stmVerify(SparseBuffer *buffer);
 static bool stmRun(uint32_t addr);
@@ -182,10 +183,7 @@ int main(int argc, char **argv) {
             goto ExitApp;
         }
     } else if(buffer) {
-        size_t fileSize = SparseBuffer_size(buffer);
-        uint16_t numPages = (fileSize + devParams.flashPageSize) /
-                devParams.flashPageSize;
-        success = stmEraseFlashPages(0, numPages);
+        success = stmErase(buffer);
         if(!success) {
             fprintf(stderr, "Unable to erase flash.\n");
             goto ExitApp;
@@ -412,10 +410,8 @@ static bool stmGetDevParams(void) {
     return true;
 }
 
-static bool stmEraseFlashPages(uint16_t first, uint16_t count) {
+static bool stmErasePages(uint16_t first, uint16_t count) {
     if(count == 0) return true;
-
-    printf("Erasing...\n");
 
     if(cmdSupported(CMD_ERASE)) {
         if(first > 255 || first + count - 1 > 255) return false;
@@ -476,7 +472,8 @@ static bool stmEraseAll(void) {
         uint16_t numPages =
                 (devParams.flashEndAddr - devParams.flashBeginAddr) /
                 devParams.flashPageSize;
-        return stmEraseFlashPages(0, numPages);
+        printf("Erasing...\n");
+        return stmErasePages(0, numPages);
     }
 
     return true;
@@ -494,6 +491,28 @@ static bool stmReadBlock(uint32_t addr, uint8_t *buff, size_t size) {
     if(!stmSendAddr(addr)) return false;
     if(!stmSendByte(size - 1)) return false;
     return serialRead(dev, buff, size);
+}
+
+static bool stmErase(SparseBuffer *buffer) {
+    printf("Erasing...\n");
+
+    MemBlock block;
+    bool ok = true;
+
+    SparseBuffer_rewind(buffer);
+    while(ok && (block = SparseBuffer_read(buffer, 0)).data) {
+        size_t lastAddr = block.offset + block.length - 1;
+        uint16_t start = (block.offset - devParams.flashBeginAddr) /
+                devParams.flashPageSize;
+        uint16_t end = (lastAddr - devParams.flashBeginAddr) /
+                devParams.flashPageSize;
+        if(start > end) {
+            return false;
+        }
+        ok = stmErasePages(start, 1 + end - start);
+    }
+
+    return ok;
 }
 
 static bool stmWrite(SparseBuffer *buffer) {

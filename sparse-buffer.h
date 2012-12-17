@@ -47,7 +47,7 @@ void SparseBuffer_destroy(SparseBuffer *self);
  */
 void SparseBuffer_set(SparseBuffer *self, MemBlock block);
 
-/** \brief Add an offset the the position of the data in the buffer.
+/** \brief Add an offset to the position of the data in the buffer.
  *
  * \param self The sparse buffer.
  * \param offset The offset.
@@ -57,7 +57,8 @@ void SparseBuffer_offset(SparseBuffer *self, ptrdiff_t offset);
 /** \brief Reads data from a sparse buffer.
  *
  * \param self The sparse buffer.
- * \param length The maximum number of bytes to read.
+ * \param length The maximum number of bytes to read.  If 0, the next
+ *               contiguous block will be read.
  *
  * \return The data.
  */
